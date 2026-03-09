@@ -1,0 +1,97 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "rag-doctor"
+version = "1.0.0"
+description = "Agentic RAG pipeline failure diagnosis tool"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+keywords = ["rag", "llm", "evaluation", "diagnosis", "retrieval", "hallucination"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Testing",
+]
+dependencies = [
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+# Full installation with LLM integrations
+full = [
+    "openai>=1.0",
+    "anthropic>=0.25",
+    "langchain>=0.2",
+    "langchain-community>=0.2",
+    "langchain-openai>=0.1",
+    "chromadb>=0.5",
+    "sentence-transformers>=2.7",
+    "tiktoken>=0.7",
+    "cohere>=5.0",
+]
+# Development dependencies
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=4.0",
+    "ruff>=0.4",
+    "mypy>=1.0",
+    "pre-commit>=3.0",
+    "twine>=5.0",
+    "build>=1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/your-org/rag-doctor"
+Documentation = "https://github.com/your-org/rag-doctor/tree/main/docs"
+Repository = "https://github.com/your-org/rag-doctor"
+"Bug Tracker" = "https://github.com/your-org/rag-doctor/issues"
+Changelog = "https://github.com/your-org/rag-doctor/blob/main/CHANGELOG.md"
+
+[project.scripts]
+rag-doctor = "rag_doctor.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["rag_doctor"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B"]
+ignore = ["E501", "B008"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["rag_doctor"]
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+
+[tool.coverage.run]
+source = ["rag_doctor"]
+omit = ["tests/*"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 80

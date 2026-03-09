@@ -1,0 +1,5 @@
+{"query": "What is the Acme Corp termination period?", "answer": "30 days notice.", "expected": "Acme Corp requires 90 days written notice."}
+{"query": "Max acetaminophen dose for liver disease?", "answer": "4000mg per day.", "expected": "Maximum 2000mg per day for liver disease patients."}
+{"query": "Does uploadFile support chunked encoding?", "answer": "Yes via the --chunked flag.", "expected": "No, uploadFile does not support chunked transfer encoding."}
+{"query": "How many parental leave weeks?", "answer": "12 weeks.", "expected": "16 weeks as of January 2024."}
+{"query": "What is the return policy?", "answer": "30 day returns for all customers.", "expected": "Full refunds within 30 days of purchase."}

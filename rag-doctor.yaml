@@ -1,0 +1,26 @@
+pipeline_type: custom
+vector_db: chroma
+embedding_model: all-MiniLM-L6-v2
+llm: mock
+
+retrieval:
+  top_k: 5
+  reranker: false
+  similarity_threshold: 0.0
+
+chunking:
+  strategy: fixed
+  chunk_size: 512
+  chunk_overlap: 64
+
+diagnosis:
+  chunk_analyzer: true
+  retrieval_auditor: true
+  position_tester: true
+  hallucination_tracer: true
+  chunk_optimizer: true
+  query_rewriter: true
+  recall_threshold: 0.75
+  faithfulness_threshold: 0.70
+  coherence_threshold: 0.65
+  severity_threshold: medium

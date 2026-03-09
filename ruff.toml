@@ -1,0 +1,17 @@
+line-length = 100
+target-version = "py39"
+
+[lint]
+select = ["E", "F", "W", "I", "N", "UP", "B"]
+ignore = [
+    "E501",   # line too long (handled by formatter)
+    "B008",   # do not perform function calls in default arguments
+    "N806",   # variable name should be lowercase (numpy convention)
+]
+
+[lint.isort]
+known-first-party = ["rag_doctor"]
+
+[format]
+quote-style = "double"
+indent-style = "space"
