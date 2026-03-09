@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://img.shields.io/badge/🩺-rag--doctor-blue?style=for-the-badge" alt="rag-doctor" height="42"/>
+# 🩺 rag-doctor
 
 **Stop guessing why your RAG pipeline is wrong. Get the root cause in 2 seconds.**
 
