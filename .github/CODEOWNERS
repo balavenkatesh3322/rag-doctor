@@ -1,0 +1,8 @@
+# Default owner for all files
+* @your-org/rag-doctor-maintainers
+
+# Tools — require tool expert review
+/rag_doctor/tools/ @your-org/rag-doctor-maintainers
+
+# CI/CD changes require maintainer review
+/.github/ @your-org/rag-doctor-maintainers

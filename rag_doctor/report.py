@@ -29,6 +29,8 @@ class DiagnosisReport:
     tool_results: List[ToolResult] = field(default_factory=list)
     fix_suggestion: Optional[str] = None
     config_patch: Dict[str, Any] = field(default_factory=dict)
+    faithfulness_score: float = 0.0
+    retrieval_score: float = 0.0
 
     @property
     def root_cause_id(self) -> str:
@@ -49,6 +51,8 @@ class DiagnosisReport:
             "finding": self.finding,
             "fix_suggestion": self.fix_suggestion,
             "config_patch": self.config_patch,
+            "faithfulness_score": self.faithfulness_score,
+            "retrieval_score": self.retrieval_score,
             "tool_results": [t.to_dict() for t in self.tool_results],
         }
 

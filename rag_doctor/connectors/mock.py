@@ -1,94 +1,72 @@
-"""Mock connector for testing without external APIs."""
+"""
+MockConnector — offline connector for testing and development.
+
+Uses VectorStore + real embeddings so retrieval quality matches production.
+The embed() method exposes a fixed-dim interface via CharFreqEmbedder for
+tests that check embedding dimensions directly.
+"""
+
 from __future__ import annotations
-import math
-import re
-from typing import List, Dict, Optional
+
+from typing import List, Dict, Optional, Callable
+
 from .base import Document, PipelineConnector
-
-
-def _simple_embed(text: str, dim: int = 64) -> List[float]:
-    """Deterministic pseudo-embedding based on character frequencies."""
-    vec = [0.0] * dim
-    for i, ch in enumerate(text.lower()):
-        vec[ord(ch) % dim] += 1.0
-    norm = math.sqrt(sum(x * x for x in vec)) or 1.0
-    return [x / norm for x in vec]
-
-
-def _cosine(a: List[float], b: List[float]) -> float:
-    dot = sum(x * y for x, y in zip(a, b))
-    na = math.sqrt(sum(x * x for x in a)) or 1e-9
-    nb = math.sqrt(sum(x * x for x in b)) or 1e-9
-    return dot / (na * nb)
+from ..vector_store import VectorStore
+from ..embeddings import BaseEmbedder, CharFreqEmbedder, reset_embedder_cache
 
 
 class MockConnector(PipelineConnector):
     """
-    In-memory connector for unit/integration tests.
-    Supports injecting a corpus of documents and a custom answer function.
+    In-memory connector for testing. Uses real semantic retrieval.
+
+    Args:
+        corpus:               List of {"content", "id", "metadata"} dicts.
+        answer_fn:            Custom fn(query, docs) -> str.
+        embedder:             Override embedding backend.
+        inject_position_bias: Move best doc to middle position.
+        inject_hallucination: Force an off-topic hallucinated answer.
+        quiet:                Suppress embedder messages.
     """
 
     def __init__(
         self,
         corpus: Optional[List[Dict]] = None,
-        answer_fn=None,
+        answer_fn: Optional[Callable] = None,
+        embedder: Optional[BaseEmbedder] = None,
         inject_position_bias: bool = False,
         inject_hallucination: bool = False,
+        quiet: bool = True,
     ):
-        self.corpus: List[Document] = []
+        self._store = VectorStore(embedder=embedder, quiet=quiet)
+        self._answer_fn = answer_fn
         self.inject_position_bias = inject_position_bias
         self.inject_hallucination = inject_hallucination
-        self._answer_fn = answer_fn
+
+        # Fixed-dim embedder for the public embed() method so tests
+        # can assert on a stable dimension regardless of backend.
+        self._char_embedder = CharFreqEmbedder(dim=CharFreqEmbedder.FIXED_DIM)
 
         if corpus:
-            for i, item in enumerate(corpus):
-                self.corpus.append(Document(
-                    content=item["content"],
-                    metadata=item.get("metadata", {}),
-                    doc_id=item.get("id", f"doc_{i}"),
-                ))
+            self._store.add_batch(corpus)
 
-    def add_document(self, content: str, metadata: dict = None, doc_id: str = None):
-        idx = len(self.corpus)
-        self.corpus.append(Document(
-            content=content,
-            metadata=metadata or {},
-            doc_id=doc_id or f"doc_{idx}",
-        ))
+    # ── PipelineConnector interface ──────────────────────────────────────────
 
     def embed(self, text: str) -> List[float]:
-        return _simple_embed(text)
+        """
+        Returns a fixed-dim (256) char-bigram embedding.
+        For retrieval the VectorStore uses its own (better) embedder internally.
+        """
+        return self._char_embedder.embed(text)
 
     def retrieve(self, query: str, top_k: int = 5) -> List[Document]:
-        if not self.corpus:
-            return []
+        results = self._store.search(query, top_k=top_k)
 
-        q_vec = _simple_embed(query)
-        scored = []
-        for doc in self.corpus:
-            d_vec = _simple_embed(doc.content)
-            score = _cosine(q_vec, d_vec)
-            scored.append((score, doc))
-
-        scored.sort(key=lambda x: -x[0])
-        results = []
-        for pos, (score, doc) in enumerate(scored[:top_k]):
-            results.append(Document(
-                content=doc.content,
-                metadata=doc.metadata,
-                score=score,
-                position=pos,
-                doc_id=doc.doc_id,
-            ))
-
-        # Inject position bias: shuffle best doc to middle
         if self.inject_position_bias and len(results) >= 3:
             best = results.pop(0)
             mid = len(results) // 2
-            best.position = mid
             results.insert(mid, best)
-            for i, r in enumerate(results):
-                r.position = i
+            for i, doc in enumerate(results):
+                doc.position = i
 
         return results
 
@@ -97,10 +75,28 @@ class MockConnector(PipelineConnector):
             return self._answer_fn(query, docs)
 
         if self.inject_hallucination:
-            return "This feature supports advanced quantum entanglement processing with the --quantum flag."
+            return (
+                "This feature supports advanced quantum entanglement processing "
+                "with the --quantum flag."
+            )
 
-        # Simple extractive: return first sentence of best doc
-        if docs:
-            first_sent = docs[0].content.split(".")[0].strip()
-            return first_sent + "."
-        return "I don't have enough information to answer."
+        if not docs:
+            return "I don't have enough information to answer."
+
+        # Extractive: first complete sentence of top doc
+        best = docs[0].content
+        sentences = [s.strip() for s in best.split(".") if s.strip()]
+        return (sentences[0] + ".") if sentences else best[:100]
+
+    # ── Convenience ─────────────────────────────────────────────────────────
+
+    def add_document(self, content: str, metadata: Optional[Dict] = None,
+                     doc_id: Optional[str] = None) -> None:
+        self._store.add(content, metadata=metadata, doc_id=doc_id)
+
+    def load_corpus(self, corpus: List[Dict]) -> None:
+        self._store.clear()
+        self._store.add_batch(corpus)
+
+    def __len__(self) -> int:
+        return len(self._store)

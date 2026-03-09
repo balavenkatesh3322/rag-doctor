@@ -1,7 +1,6 @@
 """Configuration schema for rag-doctor (stdlib only)."""
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Literal
 import yaml
 
 
@@ -15,7 +14,7 @@ class RetrievalConfig:
 
 @dataclass
 class ChunkingConfig:
-    strategy: str = "fixed"   # fixed | semantic | hierarchical | recursive
+    strategy: str = "fixed"
     chunk_size: int = 512
     chunk_overlap: int = 64
 
@@ -28,9 +27,12 @@ class DiagnosisConfig:
     hallucination_tracer: bool = True
     chunk_optimizer: bool = True
     query_rewriter: bool = True
-    recall_threshold: float = 0.75
-    faithfulness_threshold: float = 0.70
-    coherence_threshold: float = 0.65
+    # Thresholds tuned for TF-IDF (the default fallback embedder).
+    # TF-IDF paraphrase similarity ceiling is ~0.40, so thresholds are set below that.
+    # With sentence-transformers installed these can be raised to 0.65–0.80.
+    recall_threshold: float = 0.35        # flag retrieval miss below this
+    faithfulness_threshold: float = 0.40  # flag hallucination below this
+    coherence_threshold: float = 0.25     # flag chunk incoherence below this
     severity_threshold: str = "medium"
 
 

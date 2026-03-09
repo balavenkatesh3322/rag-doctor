@@ -2,17 +2,17 @@
 
 # 🩺 rag-doctor
 
-**Agentic RAG pipeline failure diagnosis tool**
+**Diagnose why your RAG pipeline returned the wrong answer — in under 2 seconds.**
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![PyPI version](https://img.shields.io/pypi/v/rag-doctor?color=blue)](https://pypi.org/project/rag-doctor/)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Tests](https://img.shields.io/badge/tests-62%20passing-brightgreen)](run_tests.py)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+[![CI](https://github.com/your-org/rag-doctor/actions/workflows/ci.yml/badge.svg)](https://github.com/your-org/rag-doctor/actions)
 
-Stop guessing why your RAG pipeline returned the wrong answer.  
-**rag-doctor** runs a six-tool agentic diagnosis loop and pinpoints the exact root cause — plus a concrete fix.
+No database. No API keys. No cloud calls. Just pass your documents and get a root cause.
 
-[Quick Start](#quick-start) · [How It Works](#how-it-works) · [CLI Reference](#cli-reference) · [Python SDK](#python-sdk) · [Contributing](#contributing)
+[Quick Start](#quick-start) · [How It Works](#how-it-works) · [Examples](#examples) · [CLI](#cli-reference) · [Docs](docs/)
 
 </div>
 
@@ -20,16 +20,21 @@ Stop guessing why your RAG pipeline returned the wrong answer.
 
 ## The Problem
 
-RAG pipelines fail silently. You get a wrong answer and have no idea if it's a chunking problem, a retrieval miss, a position bias, or a hallucination. Existing evaluation tools give you a score — they don't tell you *why*.
+RAG pipelines fail silently. You get a wrong answer and have no idea if it's a chunking problem, a retrieval miss, a position bias, or a hallucination. Existing evaluation tools give you a score — they don't tell you **why**.
 
-**rag-doctor** tells you why.
+**rag-doctor tells you why.**
 
 ```
-Root Cause : chunk_fragmentation (RC-3)
-Severity   : HIGH
-Finding    : 2/3 chunks appear truncated mid-sentence.
-Fix        : Switch to recursive chunking, reduce chunk_size to 256.
-Config     : { "chunking.strategy": "recursive", "chunking.chunk_size": 256 }
+══════════════════════════════════════════════════════════════
+  RAG-DOCTOR ✗ ISSUES FOUND
+══════════════════════════════════════════════════════════════
+  Root Cause : context_position_bias (RC-2)
+  Severity   : HIGH
+  Finding    : Best document at position 1/2 — in danger zone (risk: 1.00)
+──────────────────────────────────────────────────────────────
+  Fix: Enable a reranker to push the most relevant document to position 0.
+  Config Patch: {"retrieval.reranker": true}
+══════════════════════════════════════════════════════════════
 ```
 
 ---
@@ -38,263 +43,147 @@ Config     : { "chunking.strategy": "recursive", "chunking.chunk_size": 256 }
 
 ```bash
 pip install rag-doctor
+```
 
-rag-doctor diagnose \
-  --query    "What is the Acme Corp termination notice period?" \
-  --answer   "30 days notice required." \
-  --expected "Enterprise contracts require 90 days written notice."
+```python
+from rag_doctor import Doctor
+from rag_doctor.connectors.mock import MockConnector
+
+connector = MockConnector(corpus=[
+    {"id": "doc1", "content": "For liver disease patients maximum acetaminophen dose is 2000mg per day."},
+    {"id": "doc2", "content": "Standard adult dose: up to 4000mg per day."},
+])
+
+docs   = connector.retrieve("acetaminophen dose liver disease", top_k=3)
+answer = "The maximum daily dose is 4000mg."
+
+report = Doctor.default().diagnose(
+    query    = "What is the max acetaminophen dose for liver disease?",
+    answer   = answer,
+    docs     = docs,
+    expected = "For liver disease patients max dose is 2000mg per day.",
+)
+print(report.to_text())
 ```
 
 ---
 
 ## How It Works
 
-rag-doctor runs a deterministic agent loop across six specialized tools:
+rag-doctor runs a deterministic six-tool agent loop. Each tool targets a specific failure mode:
 
-| Tool | Root Cause ID | Detects |
+| Tool | Root Cause | What It Catches |
 |---|---|---|
-| `ChunkAnalyzer` | RC-3 | Mid-sentence truncation, low intra-chunk coherence |
-| `RetrievalAuditor` | RC-1 | Recall@k failure — correct doc not in top-k |
-| `PositionTester` | RC-2 | Lost-in-the-middle: correct doc in middle position |
-| `HallucinationTracer` | RC-4 | Claims not grounded in retrieved documents |
-| `ChunkOptimizer` | RC-3 | Best chunking strategy via grid search |
-| `QueryRewriter` | RC-5 | Vocabulary mismatch via HyDE rewriting |
+| `RetrievalAuditor` | RC-1 `retrieval_miss` | Correct document not in top-k results |
+| `PositionTester` | RC-2 `context_position_bias` | Correct doc retrieved but ignored in middle position |
+| `ChunkAnalyzer` | RC-3 `chunk_fragmentation` | Mid-sentence truncation, incoherent chunks |
+| `HallucinationTracer` | RC-4 `hallucination` | Answer claims not grounded in retrieved documents |
+| `QueryRewriter` | RC-5 `query_mismatch` | Query vocabulary doesn't match document vocabulary |
+| `ChunkOptimizer` | RC-3 sub-tool | Grid-searches best chunk_size and strategy |
 
-### Root Cause IDs
+---
 
-| ID | `root_cause` | Symptom |
+## No Database. No LLM. No API Keys.
+
+rag-doctor builds an ephemeral `VectorStore` in memory from whatever documents you pass. Your production database is never touched.
+
+**Embedding backends** (auto-selected, no config needed):
+
+| Priority | Backend | Install |
 |---|---|---|
-| RC-1 | `retrieval_miss` | Correct doc never retrieved |
-| RC-2 | `context_position_bias` | Correct doc retrieved but ignored (middle position) |
-| RC-3 | `chunk_fragmentation` | Key context split across chunks |
-| RC-4 | `hallucination` | Answer not grounded in retrieved docs |
-| RC-5 | `query_mismatch` | Query vocabulary doesn't match doc vocabulary |
-| RC-0 | `healthy` | All tools passed |
+| 1 | `sentence-transformers` | `pip install sentence-transformers` |
+| 2 | Ollama `nomic-embed-text` | `ollama pull nomic-embed-text` |
+| 3 | TF-IDF (stdlib + numpy) | nothing — built in |
+| 4 | Char n-gram fallback | nothing — always available |
+
+---
+
+## Three Ways to Use It
+
+### Mode A — Debug from Logs (no re-query needed)
+
+```python
+from rag_doctor import Doctor
+from rag_doctor.connectors.base import Document
+
+docs = [
+    Document(content=row["text"], score=row["score"], position=i)
+    for i, row in enumerate(db_rows)
+]
+report = Doctor.default().diagnose(
+    query="What is the refund policy?",
+    answer="30 days for all customers.",
+    docs=docs,
+    expected="Enterprise customers get 90-day refunds.",
+)
+print(report.root_cause)      # retrieval_miss
+print(report.fix_suggestion)  # Increase top_k or check corpus coverage.
+```
+
+### Mode B — Corpus-Level Evaluation (CI / pytest)
+
+```python
+connector = MockConnector(corpus=YOUR_CORPUS)
+docs      = connector.retrieve(query, top_k=5)
+report    = Doctor.default(connector).diagnose(query=query, answer=answer, docs=docs, expected=expected)
+assert report.severity in ("low", "medium"), report.to_text()
+```
+
+### Mode C — Connect Your Production Stack
+
+```python
+class ChromaConnector(PipelineConnector):
+    def retrieve(self, query, top_k=5):
+        results = self.collection.query(query_texts=[query], n_results=top_k)
+        return [Document(content=d, score=s, position=i) for i,(d,s) in enumerate(...)]
+
+report = Doctor.default(ChromaConnector(my_collection)).diagnose(...)
+```
 
 ---
 
 ## CLI Reference
 
-### Diagnose a single query
-
 ```bash
+# Single query
 rag-doctor diagnose \
-  --query    "Your user query" \
-  --answer   "The generated answer" \
-  --expected "The ground-truth answer"  # optional but improves diagnosis
-  --config   rag-doctor.yaml            # optional
-  --output   text                       # text | json
+  --query    "What is the termination notice?" \
+  --answer   "30 days." \
+  --expected "Enterprise requires 90 days written notice."
+
+# Batch from JSONL
+rag-doctor batch --input examples/batch_example.jsonl --fail-on-severity high
+
+# JSON output for CI
+rag-doctor diagnose --query "..." --answer "..." --output json | jq .root_cause
 ```
 
-### Batch diagnose from a JSONL file
+---
+
+## Local Setup (Mac)
 
 ```bash
-# Each line: {"query": "...", "answer": "...", "expected": "..."}
-rag-doctor batch \
-  --input              test_set.jsonl \
-  --output             report.json \
-  --fail-on-severity   high
-```
-
-### Find the best chunking strategy
-
-```bash
-rag-doctor optimize-chunks \
-  --corpus    ./docs/ \
-  --test-set  test_set.jsonl
-```
-
----
-
-## Python SDK
-
-```python
-from rag_doctor import Doctor
-
-doctor = Doctor.default()
-
-report = doctor.diagnose(
-    query    = "What is the refund policy?",
-    answer   = "30 day returns are available.",
-    docs     = retrieved_docs,   # List[Document] — optional
-    expected = "Full refunds within 30 days of purchase.",
-)
-
-print(report.root_cause)      # → "chunk_fragmentation"
-print(report.severity)        # → "medium"
-print(report.fix_suggestion)  # → "Reduce chunk_size or switch to recursive..."
-print(report.config_patch)    # → {"chunking.strategy": "recursive", ...}
-print(report.to_json())       # → Full JSON report
-```
-
-### Bring your own connector
-
-```python
-from rag_doctor import Doctor
-from rag_doctor.connectors.base import PipelineConnector, Document
-
-class MyConnector(PipelineConnector):
-    def retrieve(self, query: str, top_k: int = 5) -> list[Document]:
-        # your retrieval logic
-        ...
-    def generate(self, query: str, docs: list[Document]) -> str:
-        # your generation logic
-        ...
-
-doctor = Doctor.default(connector=MyConnector())
-report = doctor.diagnose(query="...", answer="...")
-```
-
----
-
-## Configuration
-
-Create `rag-doctor.yaml` in your project root:
-
-```yaml
-pipeline_type: langchain     # or llamaindex | custom
-vector_db: chroma            # chroma | pinecone | weaviate | pgvector
-embedding_model: all-MiniLM-L6-v2
-llm: gpt-4o
-
-retrieval:
-  top_k: 5
-  reranker: false
-
-chunking:
-  strategy: fixed            # fixed | recursive | semantic | hierarchical
-  chunk_size: 512
-  chunk_overlap: 64
-
-diagnosis:
-  recall_threshold: 0.75
-  faithfulness_threshold: 0.70
-  coherence_threshold: 0.65
-  severity_threshold: medium
-```
-
----
-
-## GitHub Action
-
-```yaml
-# .github/workflows/rag-quality.yml
-name: RAG Quality Gate
-on: [pull_request]
-
-jobs:
-  rag-doctor:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - run: pip install rag-doctor
-      - run: |
-          rag-doctor batch \
-            --input test_set.jsonl \
-            --output report.json \
-            --fail-on-severity high
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: rag-diagnosis-report
-          path: report.json
-```
-
----
-
-## MCP Integration (Cursor / Claude Code)
-
-```bash
-# Start the MCP server
-rag-doctor mcp-server --port 3100
-
-# Add to Cursor → Settings → MCP Servers:
-# { "rag-doctor": { "url": "http://localhost:3100" } }
-```
-
-Then ask Cursor: *"Why did my RAG query return the wrong answer?"*
-
----
-
-## Running Tests
-
-```bash
-# No external dependencies required
-python run_tests.py
-
-# Expected output:
-# Results: 62/62 passed in 0.02s
+git clone https://github.com/your-org/rag-doctor
+cd rag-doctor
+chmod +x scripts/test_local_mac.sh
+./scripts/test_local_mac.sh
 ```
 
 ---
 
 ## Documentation
 
-All documentation lives in the [`docs/`](docs/) folder:
-
-| File | Contents |
+| Doc | Description |
 |---|---|
-| [`01-developer-guide.docx`](docs/01-developer-guide.docx) | Install, configure, CLI & SDK reference |
-| [`02-technical-build.docx`](docs/02-technical-build.docx) | Phase-by-phase engineering spec |
-| [`03-problem-solution.docx`](docs/03-problem-solution.docx) | 4 real-world failure scenarios with fixes |
-
----
-
-## Project Structure
-
-```
-rag-doctor/
-├── rag_doctor/
-│   ├── __init__.py
-│   ├── config.py              # Dataclass config schema
-│   ├── doctor.py              # Agent orchestrator
-│   ├── report.py              # DiagnosisReport
-│   ├── cli.py                 # CLI (argparse)
-│   ├── tools/                 # 6 diagnostic tools
-│   │   ├── chunk_analyzer.py
-│   │   ├── retrieval_auditor.py
-│   │   ├── position_tester.py
-│   │   ├── hallucination_tracer.py
-│   │   ├── chunk_optimizer.py
-│   │   └── query_rewriter.py
-│   └── connectors/
-│       ├── base.py            # PipelineConnector ABC
-│       └── mock.py            # MockConnector (offline testing)
-├── tests/
-│   ├── fixtures.py
-│   ├── test_tools.py          # 24 unit tests
-│   ├── test_connectors.py     # 11 unit tests
-│   ├── test_doctor.py         # 15 integration tests
-│   └── test_end_to_end.py     # 12 end-to-end tests
-├── docs/                      # 3 docx documentation files
-├── .github/workflows/         # CI/CD workflows
-├── run_tests.py               # Standalone test runner
-├── rag-doctor.yaml            # Example config
-└── pyproject.toml
-```
-
----
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md). We welcome:
-
-- New connector implementations (LangChain, LlamaIndex, Haystack)
-- New diagnostic tools
-- Better embedding strategies
-- Bug reports and fixes
+| [docs/user-guide.md](docs/user-guide.md) | Complete user guide — all 5 journeys, all 6 root causes |
+| [docs/architecture.md](docs/architecture.md) | Internal design: embedding chain, VectorStore, agent loop |
+| [docs/tools-reference.md](docs/tools-reference.md) | API reference for all 6 tools |
+| [docs/connectors.md](docs/connectors.md) | Building custom connectors |
+| [docs/configuration.md](docs/configuration.md) | Thresholds and config options |
+| [docs/publishing.md](docs/publishing.md) | How to release to PyPI |
 
 ---
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
-
----
-
-<div align="center">
-Built with ❤️ by the open-source community
-</div>
+[MIT](LICENSE) — free for personal and commercial use.

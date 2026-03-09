@@ -5,14 +5,15 @@ build-backend = "hatchling.build"
 [project]
 name = "rag-doctor"
 version = "1.0.0"
-description = "Agentic RAG pipeline failure diagnosis tool"
+description = "Agentic RAG pipeline failure diagnosis — no database, no LLM API, no cloud"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.9"
-keywords = ["rag", "llm", "evaluation", "diagnosis", "retrieval", "hallucination"]
+keywords = ["rag", "llm", "evaluation", "diagnosis", "retrieval", "hallucination", "ai-testing"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
@@ -21,48 +22,63 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Software Development :: Testing",
+    "Topic :: Software Development :: Quality Assurance",
 ]
 dependencies = [
     "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
-# Full installation with LLM integrations
+# Semantic embeddings (recommended)
+embeddings = [
+    "sentence-transformers>=2.2.0",
+]
+# Full installation with all integrations
 full = [
+    "sentence-transformers>=2.2.0",
     "openai>=1.0",
     "anthropic>=0.25",
     "langchain>=0.2",
     "langchain-community>=0.2",
-    "langchain-openai>=0.1",
     "chromadb>=0.5",
-    "sentence-transformers>=2.7",
     "tiktoken>=0.7",
-    "cohere>=5.0",
 ]
 # Development dependencies
 dev = [
     "pytest>=7.0",
-    "pytest-asyncio>=0.23",
     "pytest-cov>=4.0",
     "ruff>=0.4",
     "mypy>=1.0",
-    "pre-commit>=3.0",
-    "twine>=5.0",
     "build>=1.0",
+    "twine>=5.0",
 ]
 
 [project.urls]
-Homepage = "https://github.com/your-org/rag-doctor"
-Documentation = "https://github.com/your-org/rag-doctor/tree/main/docs"
-Repository = "https://github.com/your-org/rag-doctor"
-"Bug Tracker" = "https://github.com/your-org/rag-doctor/issues"
-Changelog = "https://github.com/your-org/rag-doctor/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/YOUR_USERNAME/rag-doctor"
+Documentation = "https://github.com/YOUR_USERNAME/rag-doctor/tree/main/docs"
+Repository = "https://github.com/YOUR_USERNAME/rag-doctor"
+"Bug Tracker" = "https://github.com/YOUR_USERNAME/rag-doctor/issues"
+Changelog = "https://github.com/YOUR_USERNAME/rag-doctor/blob/main/CHANGELOG.md"
 
 [project.scripts]
 rag-doctor = "rag_doctor.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["rag_doctor"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "rag_doctor/",
+    "tests/",
+    "samples/",
+    "docs/",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "pyproject.toml",
+    "run_tests.py",
+    "rag-doctor.yaml",
+]
 
 [tool.ruff]
 line-length = 100

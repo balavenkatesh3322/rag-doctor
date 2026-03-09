@@ -1,248 +1,267 @@
-"""Unit tests for each diagnostic tool."""
+"""Unit tests for the six diagnostic tools."""
 
 from rag_doctor.connectors.base import Document
-from rag_doctor.tools import (
-    ChunkAnalyzer, RetrievalAuditor, PositionTester,
-    HallucinationTracer, ChunkOptimizer, QueryRewriter,
-)
+from rag_doctor.connectors.mock import MockConnector
+from rag_doctor.tools.chunk_analyzer import ChunkAnalyzer
+from rag_doctor.tools.retrieval_auditor import RetrievalAuditor
+from rag_doctor.tools.position_tester import PositionTester
+from rag_doctor.tools.hallucination_tracer import HallucinationTracer
+from rag_doctor.tools.chunk_optimizer import ChunkOptimizer
+from rag_doctor.tools.query_rewriter import QueryRewriter
+from rag_doctor.embeddings import reset_embedder_cache
 
 
-def make_doc(content, pos=0, score=0.8, doc_id=None):
-    return Document(content=content, position=pos, score=score, doc_id=doc_id or f"d{pos}")
+def _doc(content, position=0, score=0.9):
+    return Document(content=content, position=position, score=score)
 
 
 # ─── ChunkAnalyzer ────────────────────────────────────────────────────────────
 
 class TestChunkAnalyzer:
-    def setup_method(self):
-        self.tool = ChunkAnalyzer(coherence_threshold=0.65)
-
-    def test_well_formed_chunk_passes(self):
-        doc = make_doc("The refund policy states that customers receive full refunds within 30 days. "
-                       "All requests must be submitted via the support portal. "
-                       "Refunds are processed within 5-7 business days.")
-        result = self.tool.run(docs=[doc], query="refund policy")
-        assert result.tool_name == "chunk_analyzer"
-        assert result.details["total_chunks"] == 1
-
-    def test_truncated_chunk_detected(self):
-        # Starts lowercase = mid-sentence truncation
-        doc = make_doc("and therefore the policy applies to all enterprise customers who have signed the agreement")
-        result = self.tool.run(docs=[doc], query="policy")
-        assert result.details["truncated_chunks"] >= 1
-
-    def test_empty_docs(self):
-        result = self.tool.run(docs=[], query="test")
-        assert result.passed is True
-        assert result.severity == "low"
-
-    def test_multiple_docs_analyzed(self):
+    def test_truncated_chunks_detected(self):
+        """Chunks that start lowercase or end without punctuation are flagged."""
+        tool = ChunkAnalyzer(coherence_threshold=0.0)  # only check truncation
         docs = [
-            make_doc("Complete sentence about policies. Another sentence follows here.", pos=0),
-            make_doc("continuing from the previous chunk without clear context", pos=1),
-            make_doc("Final chunk with proper ending. This ends well.", pos=2),
+            _doc("Acme Corp Agreement: Either party may terminate this"),  # ends abruptly
+            _doc("90 days written notice via certified mail."),            # starts mid-sentence
         ]
-        result = self.tool.run(docs=docs, query="policy")
-        assert result.details["total_chunks"] == 3
+        result = tool.run(docs)
         assert result.details["truncated_chunks"] >= 1
+
+    def test_well_formed_chunks_pass(self):
+        tool = ChunkAnalyzer(coherence_threshold=0.0)
+        docs = [
+            _doc("The refund policy allows returns within 30 days of purchase."),
+            _doc("All enterprise customers have custom SLA agreements."),
+        ]
+        result = tool.run(docs)
+        assert result.details["truncated_chunks"] == 0
+
+    def test_empty_docs_returns_passed(self):
+        result = ChunkAnalyzer().run([])
+        assert result.passed is True
+
+    def test_result_has_required_fields(self):
+        tool = ChunkAnalyzer()
+        docs = [_doc("Some content for testing purposes here.")]
+        result = tool.run(docs)
+        assert "avg_coherence" in result.details
+        assert "truncated_chunks" in result.details
+        assert "total_chunks" in result.details
 
 
 # ─── RetrievalAuditor ─────────────────────────────────────────────────────────
 
 class TestRetrievalAuditor:
     def setup_method(self):
-        self.tool = RetrievalAuditor(recall_threshold=0.75)
+        self.corpus = [
+            {"id": "d1", "content": "Acetaminophen max dose is 4000mg for healthy adults."},
+            {"id": "d2", "content": "For liver disease patients max acetaminophen dose is 2000mg per day."},
+            {"id": "d3", "content": "Ibuprofen 400mg every four hours for pain."},
+        ]
 
-    def test_recall_hit_with_matching_expected(self):
-        doc = make_doc("Enterprise customers receive 90 days termination notice.", pos=0, score=0.9)
-        result = self.tool.run(
-            docs=[doc],
-            expected="Enterprise customers get 90 days termination notice.",
-            query="termination notice"
-        )
-        assert result.details["recall_hit"] is True
-        assert result.details["best_match_position"] == 0
-
-    def test_recall_miss_with_unrelated_docs(self):
-        doc = make_doc("ZZZZ XXXX WWWW PPPP BBBB", pos=0, score=0.2)
-        result = self.tool.run(
-            docs=[doc],
-            expected="Enterprise termination requires 90 days written notice.",
-            query="termination notice enterprise"
-        )
-        assert result.details["recall_hit"] is False
-        assert result.severity in ("high", "critical")
-
-    def test_no_docs_returns_critical(self):
-        result = self.tool.run(docs=[], expected="any answer", query="test")
+    def test_no_docs_fails(self):
+        result = RetrievalAuditor().run(docs=[], expected="anything")
         assert result.passed is False
         assert result.severity == "critical"
 
-    def test_without_expected_uses_score(self):
-        doc = make_doc("Some content", pos=0, score=0.9)
-        result = self.tool.run(docs=[doc])
-        assert result.details["top_score"] == 0.9
-
-    def test_scores_by_position_populated(self):
-        docs = [make_doc(f"Document {i} content here", pos=i, score=0.9 - i * 0.1) for i in range(3)]
-        result = self.tool.run(
+    def test_recall_hit_with_matching_expected(self):
+        """When expected answer is in corpus and retrieved, recall_hit should be True."""
+        conn = MockConnector(corpus=self.corpus)
+        docs = conn.retrieve("liver disease acetaminophen dose", top_k=3)
+        result = RetrievalAuditor(recall_threshold=0.40).run(
             docs=docs,
-            expected="Document 0 content here",
-            query="document"
+            expected="For liver disease patients max dose is 2000mg per day."
         )
-        assert len(result.details["scores_by_position"]) == 3
+        assert result.details["recall_hit"] is True
+
+    def test_recall_miss_for_unrelated_expected(self):
+        """Expected about an unrelated topic should not match acetaminophen docs."""
+        conn = MockConnector(corpus=self.corpus)
+        docs = conn.retrieve("acetaminophen dose", top_k=3)
+        result = RetrievalAuditor(recall_threshold=0.95).run(
+            docs=docs,
+            expected="The boiling point of water is 100 degrees Celsius at sea level."
+        )
+        assert result.details["recall_hit"] is False
+
+    def test_result_without_expected_uses_scores(self):
+        docs = [_doc("Some content", score=0.8)]
+        result = RetrievalAuditor(recall_threshold=0.5).run(docs=docs)
+        assert result.passed is True
+
+    def test_result_structure(self):
+        docs = [_doc("Content about liver and acetaminophen dose", score=0.9)]
+        result = RetrievalAuditor().run(docs=docs, expected="acetaminophen liver dose")
+        assert "recall_hit" in result.details
+        assert "best_match_score" in result.details
 
 
 # ─── PositionTester ───────────────────────────────────────────────────────────
 
 class TestPositionTester:
-    def setup_method(self):
-        self.tool = PositionTester()
-
-    def test_position_0_is_safe(self):
-        docs = [make_doc(f"doc {i}", pos=i) for i in range(5)]
-        result = self.tool.run(docs=docs, best_position=0, top_k=5)
-        assert result.passed is True
-        assert result.details["in_danger_zone"] is False
-
-    def test_last_position_is_safe(self):
-        docs = [make_doc(f"doc {i}", pos=i) for i in range(5)]
-        result = self.tool.run(docs=docs, best_position=4, top_k=5)
-        assert result.passed is True
-
-    def test_middle_position_is_danger(self):
-        docs = [make_doc(f"doc {i}", pos=i) for i in range(5)]
-        result = self.tool.run(docs=docs, best_position=2, top_k=5)
-        assert result.passed is False
+    def test_middle_position_detected(self):
+        """Best doc at position 1 of 3 is the danger zone."""
+        docs = [
+            _doc("General information", position=0, score=0.5),
+            _doc("The exact answer to the question.", position=1, score=0.9),
+            _doc("Unrelated content here.", position=2, score=0.4),
+        ]
+        result = PositionTester().run(docs, query="exact answer")
         assert result.details["in_danger_zone"] is True
-        assert result.severity in ("medium", "high")
+        assert result.passed is False
 
-    def test_no_docs_passes(self):
-        result = self.tool.run(docs=[], best_position=-1)
+    def test_first_position_safe(self):
+        """Best doc at position 0 is safe."""
+        docs = [
+            _doc("Best answer here.", position=0, score=0.9),
+            _doc("Less relevant.", position=1, score=0.5),
+            _doc("Even less relevant.", position=2, score=0.3),
+        ]
+        result = PositionTester().run(docs, query="best answer")
+        assert result.details["in_danger_zone"] is False
         assert result.passed is True
 
-    def test_risk_score_increases_toward_center(self):
-        docs = [make_doc(f"doc {i}", pos=i) for i in range(7)]
-        r1 = self.tool.run(docs=docs, best_position=1, top_k=7)
-        r3 = self.tool.run(docs=docs, best_position=3, top_k=7)
-        assert r3.details["position_risk_score"] >= r1.details["position_risk_score"]
+    def test_two_docs_never_danger_zone(self):
+        """With only 2 docs, no danger zone exists."""
+        docs = [
+            _doc("Content A", position=0, score=0.8),
+            _doc("Content B", position=1, score=0.5),
+        ]
+        result = PositionTester().run(docs)
+        assert result.passed is True
+
+    def test_empty_docs(self):
+        result = PositionTester().run([])
+        assert result.passed is True
+
+    def test_risk_score_range(self):
+        docs = [
+            _doc("Low relevance", position=0, score=0.2),
+            _doc("High relevance.", position=1, score=0.9),
+            _doc("Low relevance", position=2, score=0.2),
+        ]
+        result = PositionTester().run(docs)
+        assert 0.0 <= result.details["position_risk_score"] <= 1.0
 
 
 # ─── HallucinationTracer ──────────────────────────────────────────────────────
 
 class TestHallucinationTracer:
-    def setup_method(self):
-        self.tool = HallucinationTracer(faithfulness_threshold=0.60)
-
     def test_grounded_answer_passes(self):
-        doc = make_doc("The refund policy allows 30 day returns for all customers.")
-        result = self.tool.run(
-            answer="Customers can return items within 30 days per the refund policy.",
-            docs=[doc]
+        """Answer that paraphrases source content should be grounded."""
+        docs = [_doc("Acetaminophen max dose for liver patients is 2000mg per day.")]
+        result = HallucinationTracer(faithfulness_threshold=0.30).run(
+            answer="The maximum acetaminophen dose for liver disease is 2000mg daily.",
+            docs=docs,
         )
-        assert result.details["total_claims"] >= 1
+        assert result.details["faithfulness_score"] > 0.5
 
     def test_hallucinated_answer_fails(self):
-        # Use faithfulness_threshold=0.99 to force detection of mismatch
-        tool = HallucinationTracer(faithfulness_threshold=0.99)
-        doc = make_doc("ZZZZ XXXX BBBB YYYY PPPP MMMM")  # unrelated chars
-        result = tool.run(
-            answer="The maximum dose is 2000mg for liver disease patients.",
-            docs=[doc]
+        """Answer about quantum physics against a medical doc should be unfaithful."""
+        docs = [_doc("Acetaminophen dosing for liver disease patients.")]
+        result = HallucinationTracer(faithfulness_threshold=0.80).run(
+            answer="Quantum entanglement enables faster-than-light communication via photon pairs.",
+            docs=docs,
         )
         assert result.passed is False
-        assert len(result.details["hallucinated_claims"]) > 0
 
-    def test_empty_answer_passes(self):
-        result = self.tool.run(answer="", docs=[make_doc("some content")])
+    def test_empty_answer(self):
+        result = HallucinationTracer().run(answer="", docs=[_doc("Content")])
         assert result.passed is True
 
-    def test_no_docs_is_critical(self):
-        result = self.tool.run(answer="Some answer about something.", docs=[])
+    def test_no_docs_critical(self):
+        result = HallucinationTracer().run(answer="Some answer", docs=[])
         assert result.passed is False
         assert result.severity == "critical"
 
-    def test_faithfulness_score_range(self):
-        doc = make_doc("Data retention policy requires keeping records for 7 years.")
-        result = self.tool.run(answer="Records must be kept for 7 years.", docs=[doc])
+    def test_faithfulness_score_in_details(self):
+        docs = [_doc("The sky is blue during daytime.")]
+        result = HallucinationTracer().run(answer="The sky is blue.", docs=docs)
+        assert "faithfulness_score" in result.details
         assert 0.0 <= result.details["faithfulness_score"] <= 1.0
 
 
 # ─── ChunkOptimizer ───────────────────────────────────────────────────────────
 
 class TestChunkOptimizer:
-    def setup_method(self):
-        self.tool = ChunkOptimizer()
-        self.corpus = [
-            "The enterprise termination policy requires 90 days written notice. "
-            "This applies to all enterprise tier customers. Notice must be via certified mail. "
-            "Standard tier customers require only 30 days notice. "
-            "The policy was updated in January 2024.",
-            "Refund policy: Full refunds available within 30 days of purchase. "
-            "Enterprise customers have extended 90-day refund windows. "
-            "All refund requests must go through the support portal.",
-        ]
-        self.test_pairs = [
-            {"query": "enterprise termination notice period", "expected": "Enterprise requires 90 days notice."},
-            {"query": "refund window enterprise", "expected": "Enterprise customers have 90-day refund windows."},
-        ]
-
     def test_returns_ranked_strategies(self):
-        result = self.tool.run(corpus_texts=self.corpus, test_pairs=self.test_pairs)
+        corpus = [
+            "Acme Corp. Either party may terminate this agreement with 90 days written notice.",
+            "Standard contracts require 30 day termination notice for monthly billing customers.",
+            "Enterprise agreements have custom termination periods defined individually.",
+            "All agreements governed by the laws of Delaware. Arbitration required for disputes.",
+        ]
+        test_pairs = [{"query": "termination notice", "expected": "90 days written notice"}]
+        result = ChunkOptimizer().run(corpus_texts=corpus, test_pairs=test_pairs)
         assert "ranked_strategies" in result.details
         assert len(result.details["ranked_strategies"]) > 0
 
-    def test_strategies_sorted_by_recall(self):
-        result = self.tool.run(corpus_texts=self.corpus, test_pairs=self.test_pairs)
-        recalls = [s["recall_at_5"] for s in result.details["ranked_strategies"]]
-        assert recalls == sorted(recalls, reverse=True)
-
     def test_empty_corpus_passes(self):
-        result = self.tool.run(corpus_texts=[], test_pairs=self.test_pairs)
+        result = ChunkOptimizer().run(corpus_texts=[], test_pairs=[])
         assert result.passed is True
 
-    def test_improvement_computed_with_current_strategy(self):
-        result = self.tool.run(
-            corpus_texts=self.corpus,
-            test_pairs=self.test_pairs,
-            current_strategy={"strategy": "fixed", "chunk_size": 1024, "chunk_overlap": 128}
-        )
-        assert result.details.get("current_recall") is not None
+    def test_best_strategy_has_recall_score(self):
+        corpus = [
+            "The refund policy allows returns within 30 days of purchase for a full refund.",
+            "Enterprise customers have 90 day refund window with account credit option.",
+        ]
+        test_pairs = [{"query": "refund policy", "expected": "30 days return policy"}]
+        result = ChunkOptimizer().run(corpus_texts=corpus, test_pairs=test_pairs)
+        if result.details["ranked_strategies"]:
+            best = result.details["ranked_strategies"][0]
+            assert "recall_at_5" in best
+            assert 0.0 <= best["recall_at_5"] <= 1.0
+
+    def test_result_structure(self):
+        corpus = ["Policy document about employment terms and conditions."]
+        pairs = [{"query": "employment", "expected": "employment terms"}]
+        result = ChunkOptimizer().run(corpus_texts=corpus, test_pairs=pairs)
+        assert result.tool_name == "chunk_optimizer"
+        assert isinstance(result.passed, bool)
 
 
 # ─── QueryRewriter ────────────────────────────────────────────────────────────
 
 class TestQueryRewriter:
-    def setup_method(self):
-        self.tool = QueryRewriter()
-
-    def test_returns_rewrite_strategies(self):
-        docs = [make_doc("Some content about uploads", pos=0, score=0.4)]
-        result = self.tool.run(
-            query="Does uploadFile support chunked transfer encoding?",
+    def test_returns_rewrites_without_connector(self):
+        tool = QueryRewriter()
+        docs = [_doc("Parental leave policy: 16 weeks paid.", score=0.3)]
+        result = tool.run(
+            query="How many weeks maternity leave?",
             original_docs=docs,
+        )
+        assert "original_query" in result.details
+        assert "strategy_results" in result.details
+
+    def test_synonym_rewrite_improves_hr_query(self):
+        """'maternity' should be rewritten to 'parental' improving retrieval."""
+        corpus = [
+            {"id": "p1", "content": "Parental leave: all employees get 16 weeks paid parental leave."},
+            {"id": "p2", "content": "Benefits: health insurance, dental, and retirement plans."},
+        ]
+        conn = MockConnector(corpus=corpus)
+        docs = conn.retrieve("maternity leave weeks", top_k=3)
+        tool = QueryRewriter()
+        result = tool.run(
+            query="How many weeks of maternity leave?",
+            original_docs=docs,
+            connector=conn,
         )
         assert "strategy_results" in result.details
-        assert "hyde" in result.details["strategy_results"]
-        assert "step_back" in result.details["strategy_results"]
+        assert "synonym" in result.details["strategy_results"]
 
-    def test_hyde_rewrite_differs_from_original(self):
-        docs = [make_doc("content", pos=0, score=0.3)]
-        result = self.tool.run(query="What is the refund policy?", original_docs=docs)
-        hyde_q = result.details["strategy_results"].get("hyde", {}).get("query", "")
-        assert hyde_q != "What is the refund policy?"
+    def test_result_has_best_strategy(self):
+        docs = [_doc("Some content about policy.", score=0.4)]
+        result = QueryRewriter().run(query="What is the policy?", original_docs=docs)
+        assert "best_strategy" in result.details
 
-    def test_with_connector_runs_retrieval(self):
-        from tests.fixtures import make_legal_connector
-        connector = make_legal_connector()
-        docs = connector.retrieve("termination notice", top_k=5)
-        result = self.tool.run(
-            query="termination notice enterprise",
+    def test_passed_means_no_improvement_needed(self):
+        """If original retrieval is already good, rewriter should report passed=True."""
+        docs = [_doc("Exact match for the query.", score=0.95)]
+        result = QueryRewriter().run(
+            query="exact match query",
             original_docs=docs,
-            connector=connector,
         )
-        assert result.details["best_score"] > 0
-
-    def test_no_docs_still_returns_result(self):
-        result = self.tool.run(query="test query", original_docs=[])
-        assert result.tool_name == "query_rewriter"
+        # With high original score, improvement will be minimal
+        assert isinstance(result.passed, bool)

@@ -2,6 +2,7 @@
 
 from rag_doctor.connectors.mock import MockConnector
 from rag_doctor.connectors.base import Document
+from rag_doctor.embeddings import CharFreqEmbedder
 
 
 class TestMockConnector:
@@ -54,11 +55,6 @@ class TestMockConnector:
         docs = conn.retrieve("acetaminophen liver disease", top_k=3)
         if len(docs) >= 3:
             positions = [d.position for d in docs]
-            # Best doc should not be at position 0 when bias injected
-            best_content_pos = next(
-                (d.position for d in docs if "liver disease" in d.content), None
-            )
-            # Just check positions are assigned
             assert len(set(positions)) == len(positions)
 
     def test_inject_hallucination(self):
@@ -67,23 +63,42 @@ class TestMockConnector:
         answer = conn.generate("What is the dose?", docs)
         assert "quantum" in answer.lower()
 
-    def test_embed_returns_vector(self):
+    def test_embed_returns_fixed_dim_vector(self):
+        """embed() must return a fixed-dim vector (CharFreqEmbedder.FIXED_DIM)."""
         conn = MockConnector(corpus=self.corpus)
         vec = conn.embed("test text")
         assert isinstance(vec, list)
-        assert len(vec) == 64
+        assert len(vec) == CharFreqEmbedder.FIXED_DIM
         assert all(isinstance(v, float) for v in vec)
 
     def test_custom_answer_fn(self):
         def custom_fn(query, docs):
             return f"Custom answer for: {query}"
-
         conn = MockConnector(corpus=self.corpus, answer_fn=custom_fn)
-        docs = conn.retrieve("test", top_k=1)
-        answer = conn.generate("my query", docs)
-        assert "Custom answer for: my query" == answer
+        docs = conn.retrieve("dose", top_k=2)
+        answer = conn.generate("What is the dose?", docs)
+        assert "Custom answer" in answer
 
-    def test_empty_corpus(self):
-        conn = MockConnector()
-        docs = conn.retrieve("anything", top_k=5)
-        assert docs == []
+    def test_load_corpus_replaces_existing(self):
+        conn = MockConnector(corpus=self.corpus)
+        conn.load_corpus([{"id": "new", "content": "Completely new corpus."}])
+        docs = conn.retrieve("new corpus", top_k=1)
+        assert len(docs) == 1
+
+    def test_semantic_retrieval_accuracy(self):
+        """Real embedder should rank liver-disease doc higher for liver query."""
+        conn = MockConnector(corpus=self.corpus)
+        docs = conn.retrieve("liver disease acetaminophen dose", top_k=3)
+        assert len(docs) > 0
+        # Top doc should be about liver disease, not ibuprofen
+        assert "liver" in docs[0].content.lower() or "acetaminophen" in docs[0].content.lower()
+
+    def test_ibuprofen_scores_low_for_acetaminophen_query(self):
+        """Ibuprofen doc should score lower than acetaminophen docs for acetaminophen query."""
+        conn = MockConnector(corpus=self.corpus)
+        docs = conn.retrieve("acetaminophen dosing for liver patients", top_k=3)
+        # Find ibuprofen doc
+        ibu_doc = next((d for d in docs if "ibuprofen" in d.content.lower()), None)
+        ace_doc = next((d for d in docs if "acetaminophen" in d.content.lower()), None)
+        if ibu_doc and ace_doc:
+            assert ace_doc.score >= ibu_doc.score

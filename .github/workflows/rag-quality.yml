@@ -1,0 +1,35 @@
+name: RAG Quality Gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  rag-doctor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install rag-doctor
+        run: pip install -e .
+
+      - name: Run RAG quality gate
+        run: |
+          rag-doctor batch \
+            --input      tests/golden_set.jsonl \
+            --output     rag-report.json \
+            --fail-on-severity high
+
+      - name: Upload diagnosis report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rag-diagnosis-report
+          path: rag-report.json

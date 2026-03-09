@@ -1,0 +1,35 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.env
+.venv
+env/
+venv/
+build/
+dist/
+*.egg-info/
+.eggs/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.log
+.DS_Store
+*.swp
+# rag-doctor virtualenvs
+.venv-rag-doctor/
+.venv*/
+# Build artifacts
+*.whl
+*.tar.gz
+coverage.xml
+# IDE
+.idea/
+.vscode/
+*.sublime-*
+# Secrets
+.env*
+*.token
