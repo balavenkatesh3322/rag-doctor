@@ -33,3 +33,5 @@ coverage.xml
 # Secrets
 .env*
 *.token
+
+scripts/
